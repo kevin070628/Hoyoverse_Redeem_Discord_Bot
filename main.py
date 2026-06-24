@@ -5,11 +5,32 @@ import sys
 import io
 from utils.config import DISCORD_TOKEN
 
-# Windows 콘솔 인코딩 설정 (Cursor 터미널에서는 불필요 - 오히려 출력 차단됨)
-# 일반 CMD/PowerShell에서 이모지가 깨질 경우에만 아래 주석 해제
+# -------------------------------------------------------------
+# [Render 24시간 유지를 위한 Flask 웹서버 설정]
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "✅ Bot is alive and running!"
+
+def run_web_server():
+    # Render는 기본적으로 10000번 포트를 사용하거나 PORT 환경변수를 제공합니다.
+    # 포트 충돌을 방지하기 위해 0.0.0.0:8080으로 설정합니다.
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run_web_server)
+    t.daemon = True  # 메인 프로세스 종료 시 함께 종료되도록 설정
+    t.start()
+# -------------------------------------------------------------
+
+# Windows 콘솔 인코딩 설정
 # if sys.platform == 'win32':
-#     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-#     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+#      sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+#      sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -25,12 +46,6 @@ COGS = [
     "cogs.chatbot",
     "cogs.enka",
     "cogs.help",
-
-    # "cogs.upcoming", # Deprecated
-    # "cogs.hoyo_characters",  # Disabled: hakushin 사이트 폐쇄
-    # "cogs.hoyo_weapons",     # Disabled: hakushin 사이트 폐쇄
-    # "cogs.hoyo_artifacts",   # Disabled: hakushin 사이트 폐쇄
-    # "cogs.hakushin",         # Disabled: hakushin 사이트 폐쇄
     "cogs.gi_info",            # 원신 정보 (Honey Hunter World)
     "cogs.hsr_info",           # 스타레일 정보 (Prydwen.gg)
     "cogs.zzz_info",           # 젠존제 정보 (Prydwen.gg)
@@ -61,12 +76,16 @@ async def main():
     # 토큰 확인
     if not DISCORD_TOKEN:
         print("❌ 오류: DISCORD_TOKEN 환경 변수가 설정되지 않았습니다!")
-        print("   PowerShell에서 다음 명령어를 실행하세요:")
-        print('   $env:DISCORD_TOKEN="여기에_봇_토큰_입력"')
+        print("  PowerShell에서 다음 명령어를 실행하세요:")
+        print('  $env:DISCORD_TOKEN="여기에_봇_토큰_입력"')
         return
     
     print("🔄 Cog 로딩 중...")
     await load_cogs()
+    
+    # 봇 시작 직전에 가짜 웹서버 구동
+    print("🌐 웹 서버(Uptime 확인용) 시작 중...")
+    keep_alive()
     
     print("🚀 봇 시작 중...")
     try:
