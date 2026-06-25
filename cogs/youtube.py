@@ -16,9 +16,17 @@ async def get_videos_via_rss(channel_id, max_results=5):
     rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(rss_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            # 💡 [중요] Render 차단 회피를 위한 브라우저 헤더 설정
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3"
+            }
+            async with session.get(rss_url, timeout=aiohttp.ClientTimeout(total=30), headers=headers) as resp:
                 if resp.status != 200:
-                    print(f"[RSS] 실패: {resp.status}")
+                    # 💡 Render 로그(Log) 창에 몇 번 에러 코드가 뜨는지 꼭 확인하세요!
+                    # 만약 429(Too Many Requests)나 403(Forbidden)이 뜨면 IP가 막힌 겁니다.
+                    print(f"[RSS] 가져오기 실패: HTTP 상태 코드 {resp.status} (채널: {channel_id})")
                     return []
                 xml_text = await resp.text()
         
@@ -41,7 +49,7 @@ async def get_videos_via_rss(channel_id, max_results=5):
                 })
         return videos
     except Exception as e:
-        print(f"[RSS] 오류: {e}")
+        print(f"[RSS] 코드 파싱 중 오류 발생: {e}")
         return []
 
 async def get_latest_videos(channel_id, max_results=5):
