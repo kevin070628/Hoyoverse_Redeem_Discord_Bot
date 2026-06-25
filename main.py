@@ -29,6 +29,14 @@ async def on_ready():
     print(f"========================================")
     init_db()
     
+    # 🧹 과거에 등록되었던 쓸모없는 슬래시 명령어들을 디스코드 서버에서 청소합니다.
+    try:
+        bot.tree.clear(guild=None)
+        await bot.tree.sync()
+        print("🧹 디스코드 서버의 과거 슬래시 명령어 목록 초기화 완료!")
+    except Exception as e:
+        print(f"⚠️ 명령어 초기화 중 오류 (무시 가능): {e}")
+    
     for cog in REQUIRED_COGS:
         try:
             await bot.load_extension(cog)
