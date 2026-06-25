@@ -4,7 +4,13 @@ from discord.ext import commands
 from utils.config import NOTIFY_TYPES
 from utils.data import load_guild_settings, save_guild_settings
 
+# 다른 Cog에서 사용할 수 있도록 함수 정의
+def get_guild_settings(guild_id: str):
+    settings = load_guild_settings()
+    return settings.get(str(guild_id), {})
+
 class NotifyTypeSelect(discord.ui.Select):
+    # ... (기존 NotifyTypeSelect 클래스 내용 유지) ...
     def __init__(self, channel_id):
         self.channel_id = channel_id
         options = []
