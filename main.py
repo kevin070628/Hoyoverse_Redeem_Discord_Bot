@@ -3,7 +3,7 @@ from discord.ext import commands
 import asyncio
 import os
 from dotenv import load_dotenv
-from cogs.keep_alive import keep_alive
+from keep_alive import keep_alive
 from utils.data import init_db
 
 load_dotenv()
