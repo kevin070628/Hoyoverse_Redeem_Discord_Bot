@@ -2,9 +2,8 @@ import discord
 from discord.ext import commands, tasks
 import aiohttp
 import asyncio
-from datetime import datetime, timezone  # 수정: timezone 추가
-from utils.data import load_sent_codes, save_sent_codes, get_channels_for_type
-from cogs.settings import get_guild_settings
+from datetime import datetime, timezone
+from utils.data import load_sent_codes, save_sent_codes, get_channels_for_type, load_guild_settings
 
 # 초기값 로드
 sent_codes = load_sent_codes()
@@ -17,14 +16,20 @@ GAME_SETTINGS = {
 
 async def fetch_hoyolab_redeem_codes(api_act_id):
     url = f"https://sg-hk4e-api.hoyoverse.com/common/apicdkey/api/webShareCode?act_id={api_act_id}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=15) as resp:
+                # [디버그] 응답 상태코드 출력
+                print(f"[디버그] {api_act_id} API 응답 상태코드: {resp.status}", flush=True)
+                
                 if resp.status != 200:
                     return []
+                
                 data = await resp.json()
+                # [디버그] 응답 데이터 전체 출력
+                print(f"[디버그] API 응답 데이터: {data}", flush=True)
                 
                 codes = []
                 for entry in data.get("data", {}).get("code_list", []):
@@ -37,7 +42,7 @@ async def fetch_hoyolab_redeem_codes(api_act_id):
                         })
                 return codes
     except Exception as e:
-        print(f"[리딤] API 에러 ({api_act_id}): {e}")
+        print(f"[디버그] API 연결 실패 상세 에러: {e}", flush=True)
         return []
 
 class Redeem(commands.Cog):
@@ -67,7 +72,7 @@ class Redeem(commands.Cog):
             codes = await fetch_hoyolab_redeem_codes(g_info["api_act_id"])
             
         if not codes:
-            await ctx.send(f"❌ {g_info['name']}의 최신 리딤코드를 가져오지 못했습니다.")
+            await ctx.send(f"❌ {g_info['name']}에서 코드를 가져오지 못했습니다. (로그를 확인하세요)")
             return
             
         code_info = codes[0]
@@ -80,13 +85,13 @@ class Redeem(commands.Cog):
             return
             
         g_info = GAME_SETTINGS[game_key]
-        guild_settings = get_guild_settings()
+        # settings.py 대신 utils.data에서 직접 로드하여 순환 참조 방지
+        guild_settings = load_guild_settings()
         discord_channels = get_channels_for_type(guild_settings, game_key)
         
         if not discord_channels:
             return
             
-        # 🐛 수정: utcnow() 대신 timezone.utc 사용
         embed = discord.Embed(
             title=f"{g_info['emoji']} {g_info['name']} 새로운 리딤코드 발급!",
             description=f"**코드:** `{code}`\n**보상:** {code_data['reward']}",
@@ -117,7 +122,7 @@ class Redeem(commands.Cog):
     @check_redeem_codes.before_loop
     async def before_check_redeem_codes(self):
         await self.bot.wait_until_ready()
-        print("[리딤코드] 시스템 준비 완료.")
+        print("[리딤코드] 시스템 준비 완료.", flush=True)
 
 async def setup(bot):
     await bot.add_cog(Redeem(bot))
