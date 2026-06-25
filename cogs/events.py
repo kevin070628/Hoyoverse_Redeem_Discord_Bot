@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import aiohttp
 import re
 from datetime import datetime, timezone, timedelta
@@ -73,15 +72,13 @@ class Events(commands.Cog):
             print(f"[이벤트] {game} API 오류: {e}")
         return None
     
-    
     def parse_events(self, data: dict, game: str):
         """이벤트 데이터를 파싱합니다."""
         events = []
         now = datetime.now(timezone(timedelta(hours=9)))  # KST
-        config = self.api_configs.get(game)
         
         if not data or "list" not in data:
-            return events, 0
+            return events  # 🐛 기존의 튜플 반환 버그를 리스트 반환으로 수정
         
         # content 맵 생성
         content_map = {}
@@ -117,13 +114,13 @@ class Events(commands.Cog):
                     start_time = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
                     end_time = datetime.strptime(end_str, "%Y-%m-%d %H:%M:%S")
                     
-                    # KST로 변환
+                    # 호요버스 서버 표준시 기준(GMT+8) 설정
                     start_time = start_time.replace(tzinfo=timezone(timedelta(hours=8)))
                     end_time = end_time.replace(tzinfo=timezone(timedelta(hours=8)))
                     
                     # 현재 진행 중인 이벤트만
                     if start_time <= now <= end_time:
-                        # 영구 이벤트 제외 (종료일이 2029년 이후)
+                        # 영구 이벤트 제외
                         if end_time.year >= 2029:
                             continue
                         
@@ -148,7 +145,7 @@ class Events(commands.Cog):
                             "type": "이벤트" if type_id in [1, 4] else "캐릭터 체험",
                             "has_reward": has_reward
                         })
-                except Exception as e:
+                except Exception:
                     continue
         
         # 남은 일수로 정렬 (마감 임박순)
@@ -191,29 +188,9 @@ class Events(commands.Cog):
             event_lines.append(line)
         
         embed.description = "\n".join(event_lines)
-        
         embed.set_footer(text=f"총 {len(events)}개 진행 중 • 💎 = 보상 있음")
         
         return embed
-    
-    @app_commands.command(name="이벤트", description="현재 진행 중인 게임 이벤트를 확인합니다")
-    @app_commands.describe(game="이벤트를 확인할 게임")
-    @app_commands.choices(game=[
-        app_commands.Choice(name="🌟 원신", value="genshin"),
-        app_commands.Choice(name="🚂 스타레일", value="hsr"),
-    ])
-    async def event_command(self, interaction: discord.Interaction, game: str):
-        await interaction.response.defer()
-        
-        data = await self.fetch_events(game)
-        if data is None:
-            await interaction.followup.send("❌ 이벤트 정보를 가져올 수 없습니다. 잠시 후 다시 시도해주세요.")
-            return
-        
-        events = self.parse_events(data, game)
-        embed = self.create_event_embed(game, events)
-        
-        await interaction.followup.send(embed=embed)
     
     @commands.command(name="이벤트")
     async def event_command_prefix(self, ctx, game: str = None):
@@ -222,6 +199,8 @@ class Events(commands.Cog):
             "원신": "genshin",
             "genshin": "genshin",
             "스타레일": "hsr",
+            "starrail": "hsr",
+            "스타": "hsr",
             "hsr": "hsr",
             "스레": "hsr",
             "붕스": "hsr"
@@ -257,6 +236,6 @@ class Events(commands.Cog):
             
             await ctx.send(embed=embed)
 
+
 async def setup(bot):
     await bot.add_cog(Events(bot))
-
