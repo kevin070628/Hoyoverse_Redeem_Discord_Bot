@@ -3,10 +3,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 💡 [필독] 이전에 구글 콘솔에서 발급받은 API 키를 아래 변수에 직접 넣어주세요!
 YOUTUBE_API_KEY = "AIzaSyDZp9u4RRrZaaeP3MmfPvMHNXLYFSuwPc4"
 
-# 3대장 게임 데이터 고정
+# 봇이 알림을 처리할 게임 타입 정의 (이게 없어서 에러가 발생한 것입니다!)
+NOTIFY_TYPES = ["genshin_yt", "starrail_yt", "zzz_yt"]
+
 YOUTUBE_CHANNELS = {
     "genshin_yt": {
         "channel_id": "UCi_-K67v255K7URW8S8Y4A",
