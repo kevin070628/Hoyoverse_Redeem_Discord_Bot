@@ -1,315 +1,123 @@
 import discord
 from discord.ext import commands, tasks
 import aiohttp
-import re
-from bs4 import BeautifulSoup
-from utils.config import HOYO_GAME_CONFIGS, WUWA_CONFIG, ENDFIELD_CONFIG
+import asyncio
+from datetime import datetime
 from utils.data import load_sent_codes, save_sent_codes, get_channels_for_type
 from cogs.settings import get_guild_settings
 
-_loaded_codes = load_sent_codes()
-already_sent_codes = {game: _loaded_codes.get(game, set()) for game in HOYO_GAME_CONFIGS}
-already_sent_codes["wuwa"] = _loaded_codes.get("wuwa", set())
-already_sent_codes["endfield"] = _loaded_codes.get("endfield", set())
+sent_codes = load_sent_codes()
 
-async def fetch_hoyo_codes(api_url):
+GAME_SETTINGS = {
+    "genshin": {"name": "원신", "emoji": "🌋", "hoyo_key": "genshin", "api_act_id": "e202102251931481"},
+    "starrail": {"name": "붕괴: 스타레일", "emoji": "🚂", "hoyo_key": "starrail", "api_act_id": "e202304171044231"},
+    "zzz": {"name": "젠레스 존 제로", "emoji": "📼", "hoyo_key": "zzz", "api_act_id": "e202407041710121"}
+}
+
+async def fetch_hoyolab_redeem_codes(api_act_id):
+    """호요랩 공식 패키지/리딤 API를 통해 코드를 긁어옵니다."""
+    url = f"https://sg-hk4e-api.hoyoverse.com/common/apicdkey/api/webShareCode?act_id={api_act_id}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with session.get(url, headers=headers, timeout=15) as resp:
                 if resp.status != 200:
-                    print(f"코드 가져오기 실패: HTTP {resp.status}")
                     return []
                 data = await resp.json()
-                return data.get("codes", [])
-    except aiohttp.ClientError as e:
-        print(f"네트워크 오류: {e}")
-        return []
-    except Exception as e:
-        print(f"코드 가져오기 중 예외 발생: {e}")
-        return []
-
-async def fetch_wuwa_codes():
-    try:
-        async with aiohttp.ClientSession() as session:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-            async with session.get(WUWA_CONFIG["wiki_url"], timeout=aiohttp.ClientTimeout(total=30), headers=headers) as resp:
-                if resp.status != 200:
-                    print(f"명조 코드 가져오기 실패: HTTP {resp.status}")
-                    return []
-                html = await resp.text()
-                soup = BeautifulSoup(html, 'lxml')
                 
                 codes = []
-                active_table = soup.find('table', id='tpt-acticodes')
-                
-                if not active_table:
-                    print("명조 Active 테이블을 찾을 수 없음")
-                    return []
-                
-                rows = active_table.find_all('tr')[1:]
-                for row in rows:
-                    cells = row.find_all('td')
-                    if len(cells) >= 3:
-                        code_cell = cells[1]
-                        reward_cell = cells[3] if len(cells) > 3 else cells[2]
-                        
-                        code_tag = code_cell.find('code')
-                        if code_tag:
-                            code = code_tag.get_text(strip=True)
-                            reward = reward_cell.get_text(strip=True)
-                            
-                            if code and len(code) > 3:
-                                codes.append({
-                                    "code": code,
-                                    "rewards": reward
-                                })
-                
-                return codes
-    except Exception as e:
-        print(f"명조 코드 가져오기 중 예외 발생: {e}")
-        return []
-
-async def fetch_endfield_codes():
-    try:
-        async with aiohttp.ClientSession() as session:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-            async with session.get(ENDFIELD_CONFIG["url"], timeout=aiohttp.ClientTimeout(total=30), headers=headers) as resp:
-                if resp.status != 200:
-                    print(f"엔드필드 코드 가져오기 실패: HTTP {resp.status}")
-                    return []
-                html = await resp.text()
-                soup = BeautifulSoup(html, 'lxml')
-                
-                codes = []
-                # Game8 structure: Use all elements with class 'a-clipboard__textInput'
-                # These inputs contain the code value.
-                inputs = soup.find_all('input', class_='a-clipboard__textInput')
-                
-                for inp in inputs:
-                    code = inp.get('value', '').strip()
-                    if code and len(code) > 3:
-                        # Try to find rewards in the same table row if possible
-                        # Game8 tables usually have Code in one cell and Reward in another.
-                        reward = "출시 기념 보상"
-                        try:
-                            # Search for reward text in the neighboring cells
-                            parent_td = inp.find_parent('td')
-                            if parent_td:
-                                row = parent_td.find_parent('tr')
-                                if row:
-                                    cells = row.find_all('td')
-                                    if len(cells) >= 2:
-                                        # Usually Reward is in the second or third cell
-                                        reward_text = cells[1].get_text(strip=True)
-                                        if reward_text and reward_text != code:
-                                            reward = reward_text
-                        except:
-                            pass
-                            
+                for entry in data.get("data", {}).get("code_list", []):
+                    code = entry.get("code")
+                    if code:
                         codes.append({
                             "code": code,
-                            "rewards": reward
+                            "reward": entry.get("title", "게임 내 보상"),
+                            "time": entry.get("creat_time", "")
                         })
-                
                 return codes
     except Exception as e:
-        print(f"엔드필드 코드 가져오기 중 예외 발생: {e}")
+        print(f"[리딤] API 에러 ({api_act_id}): {e}")
         return []
-
-def extract_currency_amount(reward, currency_keyword, currency_name):
-    if not reward:
-        return None
-    
-    reward_lower = reward.lower()
-    if currency_keyword not in reward_lower:
-        return None
-    
-    patterns = [
-        rf'(\d+[\d,]*)\s*{re.escape(currency_keyword)}',
-        rf'{re.escape(currency_keyword)}\s*[×x]\s*(\d+[\d,]*)',
-        rf'(\d+[\d,]*)\s*x\s*{re.escape(currency_keyword)}',
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, reward_lower)
-        if match:
-            amount = match.group(1).replace(',', '')
-            return f"{currency_name} {amount}개"
-    
-    return None
 
 class Redeem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.check_codes.start()
-    
+        self.check_redeem_codes.start()
+        
     def cog_unload(self):
-        self.check_codes.cancel()
-    
-    @tasks.loop(minutes=5)
-    async def check_codes(self):
-        global already_sent_codes
-        codes_updated = False
+        self.check_redeem_codes.cancel()
+
+    @commands.command(name="코드테스트")
+    @commands.has_permissions(administrator=True)
+    async def code_test(self, ctx, game: str = "genshin"):
+        if game not in GAME_SETTINGS:
+            await ctx.send("❌ 가능한 게임: genshin, starrail, zzz")
+            return
+            
+        g_info = GAME_SETTINGS[game]
+        async with ctx.typing():
+            codes = await fetch_hoyolab_redeem_codes(g_info["api_act_id"])
+            
+        if not codes:
+            await ctx.send(f"❌ {g_info['name']} 최신 리딤코드를 가져오지 못했습니다.")
+            return
+            
+        code_info = codes[0]
+        await ctx.send(f"🧪 **[리딤 테스트] {g_info['emoji']} {g_info['name']}**\n코드: `{code_info['code']}`\n보상: {code_info['reward']}")
+
+    async def send_redeem_notification(self, game_key, code_data):
+        global sent_codes
+        code = code_data["code"]
+        if code in sent_codes:
+            return
+            
+        g_info = GAME_SETTINGS[game_key]
         guild_settings = get_guild_settings()
+        discord_channels = get_channels_for_type(guild_settings, game_key)
         
-        for game_key, config in HOYO_GAME_CONFIGS.items():
-            channels = get_channels_for_type(guild_settings, game_key)
-            if not channels:
-                continue
-
-            codes = await fetch_hoyo_codes(config["api_url"])
-            if not codes:
-                continue
-
-            new_list = []
-
-            for item in codes:
-                code = item.get("code")
-                if not code:
-                    continue
-
-                if code not in already_sent_codes[game_key]:
-                    already_sent_codes[game_key].add(code)
-                    new_list.append(item)
-                    codes_updated = True
-
-            for item in new_list:
-                code = item.get("code")
-                reward = item.get("rewards", "")
-
-                currency_info = extract_currency_amount(
-                    reward, 
-                    config["currency_keyword"], 
-                    config["currency_name"]
-                )
-
-                redeem_url = f"{config['redeem_url']}{code}"
-                
-                if currency_info:
-                    msg = f"🎁 [{code}](<{redeem_url}>) - {currency_info}"
-                else:
-                    msg = f"🎁 [{code}](<{redeem_url}>)"
-
-                for channel_id in channels:
-                    channel = self.bot.get_channel(channel_id)
-                    if channel:
-                        try:
-                            await channel.send(msg)
-                        except Exception as e:
-                            print(f"채널 {channel_id}에 메시지 전송 실패: {e}")
-
-            if new_list:
-                print(f"[{config['name']}] 새 코드 전송:", [c.get("code") for c in new_list])
-
-        wuwa_channels = get_channels_for_type(guild_settings, "wuwa")
-        if wuwa_channels:
-            codes = await fetch_wuwa_codes()
+        if not discord_channels:
+            return
             
-            new_list = []
-            for item in codes:
-                code = item.get("code")
-                if not code:
-                    continue
-
-                if code not in already_sent_codes["wuwa"]:
-                    already_sent_codes["wuwa"].add(code)
-                    new_list.append(item)
-                    codes_updated = True
-
-            for item in new_list:
-                code = item.get("code")
-                reward = item.get("rewards", "")
-
-                currency_info = extract_currency_amount(
-                    reward, 
-                    WUWA_CONFIG["currency_keyword"], 
-                    WUWA_CONFIG["currency_name"]
-                )
-
-                msg = f"🎁 {code}"
-                if currency_info:
-                    msg += f" - {currency_info}"
-
-                for channel_id in wuwa_channels:
-                    channel = self.bot.get_channel(channel_id)
-                    if channel:
-                        try:
-                            await channel.send(msg)
-                        except Exception as e:
-                            print(f"채널 {channel_id}에 메시지 전송 실패: {e}")
-
-            if new_list:
-                print(f"[{WUWA_CONFIG['name']}] 새 코드 전송:", [c.get("code") for c in new_list])
+        embed = discord.Embed(
+            title=f"{g_info['emoji']} {g_info['name']} 새로운 리딤코드 발급!",
+            description=f"**코드:** `{code}`\n**보상:** {code_data['reward']}",
+            color=discord.Color.gold(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="호요버스 알림 서비스")
         
-        # === Arknights: Endfield ===
-        endfield_channels = get_channels_for_type(guild_settings, "endfield")
-        if endfield_channels:
-            codes = await fetch_endfield_codes()
-            new_list = []
-            for item in codes:
-                code = item.get("code")
-                if not code: continue
-                if code not in already_sent_codes["endfield"]:
-                    already_sent_codes["endfield"].add(code)
-                    new_list.append(item)
-                    codes_updated = True
-            
-            for item in new_list:
-                code = item.get("code")
-                reward = item.get("rewards", "")
-                currency_info = extract_currency_amount(
-                    reward, 
-                    ENDFIELD_CONFIG["currency_keyword"], 
-                    ENDFIELD_CONFIG["currency_name"]
-                )
-                msg = f"🎁 **{ENDFIELD_CONFIG['name']}**\n코드: `{code}`"
-                if currency_info:
-                    msg += f" - {currency_info}"
-                
-                for channel_id in endfield_channels:
-                    channel = self.bot.get_channel(channel_id)
-                    if channel:
-                        try:
-                            await channel.send(msg)
-                        except Exception as e:
-                            print(f"엔드필드 알림 전송 실패: {e}")
-            if new_list:
-                print(f"[{ENDFIELD_CONFIG['name']}] 새 코드 전송:", [c.get("code") for c in new_list])
+        for channel_id in discord_channels:
+            channel = self.bot.get_channel(channel_id)
+            if channel:
+                try:
+                    await channel.send(embed=embed)
+                except Exception as e:
+                    print(f"리딤 전송 실패: {e}")
+                    
+        sent_codes.add(code)
+        save_sent_codes(sent_codes)
 
-        if codes_updated:
-            save_sent_codes(already_sent_codes)
-    
-    @check_codes.before_loop
-    async def before_check_codes(self):
-        global already_sent_codes
+    @tasks.loop(minutes=5)
+    async def check_redeem_codes(self):
+        for game_key, g_info in GAME_SETTINGS.items():
+            codes = await fetch_hoyolab_redeem_codes(g_info["api_act_id"])
+            for code_data in reversed(codes):
+                await self.send_redeem_notification(game_key, code_data)
+            await asyncio.sleep(2)
+
+    @check_redeem_codes.before_loop
+    async def before_check_redeem_codes(self):
+        global sent_codes
         await self.bot.wait_until_ready()
-        
-        print("[리딤코드] 기존 코드 초기화 중...")
-        
-        for game_key, config in HOYO_GAME_CONFIGS.items():
-            codes = await fetch_hoyo_codes(config["api_url"])
-            for item in codes:
-                code = item.get("code")
-                if code:
-                    already_sent_codes[game_key].add(code)
-            print(f"  [{config['name']}] 기존 코드 {len(codes)}개 등록")
-        
-        wuwa_codes = await fetch_wuwa_codes()
-        for item in wuwa_codes:
-            code = item.get("code")
-            if code:
-                already_sent_codes["wuwa"].add(code)
-        print(f"  [{WUWA_CONFIG['name']}] 기존 코드 {len(wuwa_codes)}개 등록")
-        
-        endfield_codes = await fetch_endfield_codes()
-        for item in endfield_codes:
-            code = item.get("code")
-            if code:
-                already_sent_codes["endfield"].add(code)
-        print(f"  [{ENDFIELD_CONFIG['name']}] 기존 코드 {len(endfield_codes)}개 등록")
-        
-        save_sent_codes(already_sent_codes)
-        print("[리딤코드] 초기화 완료! 이후 새 코드만 알림됩니다.")
+        print("[리딤코드] 3대장 게임 코드 초기화 및 캐싱 중...")
+        for game_key, g_info in GAME_SETTINGS.items():
+            codes = await fetch_hoyolab_redeem_codes(g_info["api_act_id"])
+            for code_data in codes:
+                sent_codes.add(code_data["code"])
+            await asyncio.sleep(1)
+        save_sent_codes(sent_codes)
+        print(f"[리딤코드] 초기화 완료. {len(sent_codes)}개 캐시됨.")
 
 async def setup(bot):
     await bot.add_cog(Redeem(bot))
