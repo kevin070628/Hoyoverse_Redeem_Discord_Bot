@@ -3,58 +3,54 @@ from discord.ext import commands, tasks
 import aiohttp
 import asyncio
 from datetime import datetime
-from xml.etree import ElementTree
 from utils.config import YOUTUBE_CHANNELS
 from utils.data import load_sent_videos, save_sent_videos, get_channels_for_type
 from cogs.settings import get_guild_settings
 
-sent_videos = load_sent_videos()
+YOUTUBE_API_KEY = "AIzaSyDZp9u4RRrZaaeP3MmfPvMHNXLYFSuwPc4"
 
+sent_videos = load_sent_videos()
 FIXED_MINUTES = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]
 
-async def get_videos_via_rss(channel_id, max_results=5):
-    rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            # 💡 [중요] Render 차단 회피를 위한 브라우저 헤더 설정
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3"
-            }
-            async with session.get(rss_url, timeout=aiohttp.ClientTimeout(total=30), headers=headers) as resp:
-                if resp.status != 200:
-                    # 💡 Render 로그(Log) 창에 몇 번 에러 코드가 뜨는지 꼭 확인하세요!
-                    # 만약 429(Too Many Requests)나 403(Forbidden)이 뜨면 IP가 막힌 겁니다.
-                    print(f"[RSS] 가져오기 실패: HTTP 상태 코드 {resp.status} (채널: {channel_id})")
-                    return []
-                xml_text = await resp.text()
-        
-        root = ElementTree.fromstring(xml_text)
-        ns = {"atom": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015", "media": "http://search.yahoo.com/mrss/"}
-        
-        videos = []
-        for entry in root.findall("atom:entry", ns)[:max_results]:
-            video_id = entry.find("yt:videoId", ns)
-            title = entry.find("atom:title", ns)
-            published = entry.find("atom:published", ns)
-            
-            if video_id is not None:
-                thumbnail_url = f"https://i.ytimg.com/vi/{video_id.text}/hqdefault.jpg"
-                videos.append({
-                    "video_id": video_id.text,
-                    "title": title.text if title is not None else "제목 없음",
-                    "thumbnail": thumbnail_url,
-                    "published_at": published.text if published is not None else ""
-                })
-        return videos
-    except Exception as e:
-        print(f"[RSS] 코드 파싱 중 오류 발생: {e}")
+async def get_latest_videos(channel_id, max_results=5):
+    """구글 공식 YouTube Data API v3를 사용하여 최신 영상을 안전하게 가져옵니다."""
+    if not YOUTUBE_API_KEY or "여기에_" in YOUTUBE_API_KEY:
+        print("[유튜브] 오류: YOUTUBE_API_KEY가 설정되지 않았습니다.")
         return []
 
-async def get_latest_videos(channel_id, max_results=5):
-    # RSS 모드 강제 사용 (API 비활성화)
-    return await get_videos_via_rss(channel_id, max_results)
+    url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "key": YOUTUBE_API_KEY,
+        "channelId": channel_id,
+        "part": "snippet",
+        "order": "date",
+        "maxResults": max_results,
+        "type": "video"
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    print(f"[유튜브 API] 실패: HTTP {resp.status} - {error_text}")
+                    return []
+                
+                data = await resp.json()
+                videos = []
+                for item in data.get("items", []):
+                    video_id = item["id"].get("videoId")
+                    snippet = item.get("snippet", {})
+                    if video_id:
+                        videos.append({
+                            "video_id": video_id,
+                            "title": snippet.get("title", "제목 없음"),
+                            "published_at": snippet.get("publishedAt", "")
+                        })
+                return videos
+    except Exception as e:
+        print(f"[유튜브 API] 요청 중 예외 발생: {e}")
+        return []
 
 class YouTube(commands.Cog):
     def __init__(self, bot):
@@ -68,29 +64,17 @@ class YouTube(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def rss_test(self, ctx, channel: str = "genshin"):
         channel_map = {
-            "원신": "genshin_yt",
-            "genshin": "genshin_yt",
-            "스타레일": "starrail_yt",
-            "starrail": "starrail_yt",
-            "젠레스": "zzz_yt",
-            "zzz": "zzz_yt",
-            "명조": "wuwa_yt",
-            "wuwa": "wuwa_yt",
-            "쁘띠플레닛": "petitplanet_yt",
-            "쁘띠": "petitplanet_yt",
-            "petit": "petitplanet_yt",
-            "varsapura": "varsapura_yt",
-            "바르사푸라": "varsapura_yt",
-            "넥서스아니마": "nexusanima_yt",
-            "넥서스": "nexusanima_yt",
-            "nexus": "nexusanima_yt",
-            "nexus": "nexusanima_yt",
-            "엔드필드": "endfield_yt",
-            "endfield": "endfield_yt",
+            "원신": "genshin_yt", "genshin": "genshin_yt",
+            "스타레일": "starrail_yt", "starrail": "starrail_yt",
+            "젠레스": "zzz_yt", "zzz": "zzz_yt",
+            "명조": "wuwa_yt", "wuwa": "wuwa_yt",
+            "쁘띠플레닛": "petitplanet_yt", "쁘띠": "petitplanet_yt", "petit": "petitplanet_yt",
+            "varsapura": "varsapura_yt", "바르사푸라": "varsapura_yt",
+            "nexusanima": "nexusanima_yt", "넥서스": "nexusanima_yt", "nexus": "nexusanima_yt",
+            "엔드필드": "endfield_yt", "endfield": "endfield_yt",
         }
         
         yt_key = channel_map.get(channel.lower())
-        
         if not yt_key:
             available = ", ".join(set(channel_map.keys()))
             await ctx.send(f"❌ 채널을 찾을 수 없어요!\n가능한 채널: {available}")
@@ -103,16 +87,15 @@ class YouTube(commands.Cog):
         yt_info = YOUTUBE_CHANNELS[yt_key]
         
         async with ctx.typing():
-            videos = await get_videos_via_rss(yt_info["channel_id"], max_results=1)
+            videos = await get_latest_videos(yt_info["channel_id"], max_results=1)
         
         if not videos:
-            await ctx.send("❌ RSS에서 영상을 가져올 수 없어요!")
+            await ctx.send("❌ 유튜브 API에서 영상을 가져올 수 없어요! 로그나 API 키 설정을 확인하세요.")
             return
         
         video = videos[0]
         url = f"https://www.youtube.com/watch?v={video['video_id']}"
-        
-        await ctx.send(f"🧪 **[RSS 테스트] {yt_info['name']}** 새 영상!\n{url}")
+        await ctx.send(f"🧪 **[API 테스트] {yt_info['name']}** 최신 영상!\n제목: {video['title']}\n{url}")
     
     async def send_youtube_notification(self, video, yt_channel_key):
         global sent_videos
@@ -132,7 +115,10 @@ class YouTube(commands.Cog):
         for channel_id in discord_channels:
             channel = self.bot.get_channel(channel_id)
             if channel:
-                await channel.send(f"{yt_info['emoji']} **{yt_info['name']}** 새 영상!\n{url}")
+                try:
+                    await channel.send(f"{yt_info['emoji']} **{yt_info['name']}** 새 영상!\n{url}")
+                except Exception as e:
+                    print(f"채널 {channel_id} 유튜브 알림 실패: {e}")
         
         sent_videos.add(video_id)
         save_sent_videos(sent_videos)
@@ -141,12 +127,11 @@ class YouTube(commands.Cog):
     @tasks.loop(minutes=1)
     async def check_youtube(self):
         global sent_videos
-        
         current_minute = datetime.now().minute
         if current_minute not in FIXED_MINUTES:
             return
         
-        print(f"[유튜브] 체크 중... ({current_minute}분, RSS 모드)")
+        print(f"[유튜브] API 체크 중... ({current_minute}분)")
         guild_settings = get_guild_settings()
         
         for yt_key, yt_info in YOUTUBE_CHANNELS.items():
@@ -155,13 +140,9 @@ class YouTube(commands.Cog):
                 continue
             
             videos = await get_latest_videos(yt_info["channel_id"], max_results=5)
-            
             for video in reversed(videos):
-                video_id = video["video_id"]
-                
-                if video_id in sent_videos:
+                if video["video_id"] in sent_videos:
                     continue
-                
                 await self.send_youtube_notification(video, yt_key)
             
             await asyncio.sleep(1)
@@ -171,8 +152,7 @@ class YouTube(commands.Cog):
         global sent_videos
         await self.bot.wait_until_ready()
         
-        print("[유튜브] 기존 영상 캐싱 중... (RSS 모드)")
-        
+        print("[유튜브] API 모드 초기화 및 기존 영상 캐싱 중...")
         for yt_key, yt_info in YOUTUBE_CHANNELS.items():
             videos = await get_latest_videos(yt_info["channel_id"], max_results=5)
             for video in videos:
@@ -180,7 +160,7 @@ class YouTube(commands.Cog):
             await asyncio.sleep(0.5)
         
         save_sent_videos(sent_videos)
-        print(f"[유튜브] 초기화 완료. 기존 영상 {len(sent_videos)}개 캐시됨. 이후 새 영상만 알림됩니다.")
+        print(f"[유튜브] API 초기화 완료. {len(sent_videos)}개 캐시됨. 이후 신규 영상만 알림됩니다.")
 
 async def setup(bot):
     await bot.add_cog(YouTube(bot))
