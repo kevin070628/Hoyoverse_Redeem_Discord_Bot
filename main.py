@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import asyncio
 import os
+import threading
 from dotenv import load_dotenv
 from cogs.keep_alive import keep_alive
 from utils.data import init_db
@@ -9,7 +10,7 @@ from utils.data import init_db
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-# intents 설정에 message_content가 True인 것 확인 (필수!)
+# intents 설정
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -41,7 +42,6 @@ async def on_ready():
             
     # 3. 슬래시 명령어 청소 및 동기화
     try:
-        # 기존 명령어 전체 제거 후 현재 코드에 있는 명령어들로 다시 싱크
         bot.tree.clear_commands(guild=None) 
         await bot.tree.sync()
         print("🧹 유령 슬래시 명령어 청소 및 명령어 동기화 완료!")
@@ -51,9 +51,17 @@ async def on_ready():
     print(f"🚀 호요버스 3대장 알림 서비스 정상 가동 중!")
     print(f"========================================\n")
 
+def run_keep_alive():
+    """Flask 웹 서버를 별도 스레드에서 실행"""
+    keep_alive()
+
 async def main():
-    # keep_alive를 비동기적으로 실행
-    keep_alive() 
+    # 1. keep_alive를 백그라운드 스레드에서 시작 (봇 실행을 차단하지 않음)
+    server_thread = threading.Thread(target=run_keep_alive)
+    server_thread.daemon = True  # 메인 프로그램 종료 시 서버도 함께 종료되도록 설정
+    server_thread.start()
+    
+    # 2. 봇 실행
     async with bot:
         await bot.start(TOKEN)
 
@@ -61,5 +69,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        # 봇 종료 시 정리 작업
         pass
