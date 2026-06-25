@@ -51,20 +51,29 @@ class Redeem(commands.Cog):
     @commands.command(name="코드테스트")
     @commands.has_permissions(administrator=True)
     async def code_test(self, ctx, game: str = "genshin"):
-        if game not in GAME_SETTINGS:
-            await ctx.send("❌ 가능한 게임: genshin, starrail, zzz")
+        # 💡 한글 입력(원신, 스타레일, 젠레스)도 영어 키값으로 바꿔주는 맵핑
+        channel_map = {
+            "원신": "genshin", "genshin": "genshin",
+            "스타레일": "starrail", "starrail": "starrail", "붕괴스타레일": "starrail",
+            "젠레스": "zzz", "zzz": "zzz", "젠레스존제로": "zzz"
+        }
+        
+        game_key = channel_map.get(game.lower())
+        if not game_key:
+            await ctx.send("❌ 가능한 게임: 원신(genshin), 스타레일(starrail), 젠레스(zzz)")
             return
             
-        g_info = GAME_SETTINGS[game]
+        g_info = GAME_SETTINGS[game_key]
         async with ctx.typing():
             codes = await fetch_hoyolab_redeem_codes(g_info["api_act_id"])
             
         if not codes:
-            await ctx.send(f"❌ {g_info['name']} 최신 리딤코드를 가져오지 못했습니다.")
+            await ctx.send(f"❌ {g_info['name']}의 최신 리딤코드를 가져오지 못했습니다. (API 응답 없음)")
             return
             
+        # 캐싱 여부와 상관없이 현재 API에 존재하는 최신 코드를 무조건 보여줍니다.
         code_info = codes[0]
-        await ctx.send(f"🧪 **[리딤 테스트] {g_info['emoji']} {g_info['name']}**\n코드: `{code_info['code']}`\n보상: {code_info['reward']}")
+        await ctx.send(f"🧪 **[리딤 테스트] {g_info['emoji']} {g_info['name']}**\n코드: `{code_info['code']}`\n보상: {code_info['reward']}\n\n*※ 현재 정상적으로 호요랩에서 데이터를 당겨오고 있습니다!*")
 
     async def send_redeem_notification(self, game_key, code_data):
         global sent_codes
@@ -108,16 +117,8 @@ class Redeem(commands.Cog):
 
     @check_redeem_codes.before_loop
     async def before_check_redeem_codes(self):
-        global sent_codes
         await self.bot.wait_until_ready()
-        print("[리딤코드] 3대장 게임 코드 초기화 및 캐싱 중...")
-        for game_key, g_info in GAME_SETTINGS.items():
-            codes = await fetch_hoyolab_redeem_codes(g_info["api_act_id"])
-            for code_data in codes:
-                sent_codes.add(code_data["code"])
-            await asyncio.sleep(1)
-        save_sent_codes(sent_codes)
-        print(f"[리딤코드] 초기화 완료. {len(sent_codes)}개 캐시됨.")
+        print("[리딤코드] 시스템 준비 완료.")
 
 async def setup(bot):
     await bot.add_cog(Redeem(bot))
